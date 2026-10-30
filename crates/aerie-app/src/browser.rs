@@ -299,6 +299,16 @@ fn install_actions(
             }
         }
     ));
+    let open_local = gio::SimpleAction::new("open-local-folder", Some(glib::VariantTy::STRING));
+    open_local.connect_activate(glib::clone!(
+        #[strong]
+        browser,
+        move |_, id| {
+            if let Some(id) = id.and_then(|id| id.str()) {
+                browser.open_local_drive(&DriveFileId::new(id));
+            }
+        }
+    ));
     let sign_out = gio::SimpleAction::new("sign-out", None);
     sign_out.set_enabled(false);
     sign_out.connect_activate(glib::clone!(
@@ -327,6 +337,7 @@ fn install_actions(
         &open_in_drive,
         &sync_folder,
         &sync_root,
+        &open_local,
         &preferences,
     ] {
         window.add_action(action);
@@ -664,6 +675,8 @@ struct Browser {
     breadcrumbs: gtk::Box,
     /// Keeps the open folder (or drive) in sync; pressed while it syncs.
     sync_button: gtk::ToggleButton,
+    /// Opens the browsed drive's directory in the desktop file manager.
+    open_local_button: gtk::Button,
     content: gtk::Stack,
     empty: adw::StatusPage,
     banner: adw::Banner,
@@ -835,6 +848,11 @@ impl Browser {
                 .icon_name("aerie-folder-sync-symbolic")
                 .visible(false)
                 .build(),
+            open_local_button: gtk::Button::builder()
+                .icon_name("aerie-folder-open-symbolic")
+                .tooltip_text("Open drive’s local folder")
+                .visible(false)
+                .build(),
             breadcrumbs: gtk::Box::builder()
                 .spacing(2)
                 .css_classes(["breadcrumbs"])
@@ -991,6 +1009,10 @@ impl Browser {
 
     fn update_actions(&self) {
         self.update_sync_button();
+        self.open_local_button.set_visible(
+            self.current_drive_id()
+                .is_some_and(|id| self.local_drive_folder(&id).is_some()),
+        );
         let Some(window) = self.window() else { return };
         let drive = self.is_drive();
         let selected = self.selected().filter(|_| drive);
@@ -1259,6 +1281,7 @@ impl Browser {
         let off = state == crate::engine::SyncState::Off;
         self.sync_state.replace((!off).then_some(state));
         self.set_status(Status::UpToDate);
+        self.update_actions();
     }
 
     fn set_transfer_count(&self, active: usize) {
@@ -1479,6 +1502,57 @@ impl Browser {
         }
     }
 
+    fn current_drive_id(&self) -> Option<DriveFileId> {
+        let state = self.state.borrow();
+        let AppCatalog::Drive(catalog) = state.catalog() else {
+            return None;
+        };
+        self.tree
+            .borrow()
+            .as_ref()
+            .map(|drive| drive.id.clone())
+            .or_else(|| catalog.root())
+    }
+
+    fn local_drive_folder(&self, id: &DriveFileId) -> Option<std::path::PathBuf> {
+        match self.state.borrow().catalog() {
+            AppCatalog::Drive(catalog) => catalog.local_drive_folder(id),
+            AppCatalog::Samples(_) => None,
+        }
+    }
+
+    fn open_local_drive(self: &Rc<Self>, id: &DriveFileId) {
+        let Some(path) = self.local_drive_folder(id) else {
+            self.toast(adw::Toast::new("This drive has no local sync folder."));
+            return;
+        };
+        if !path.is_dir() {
+            self.toast(adw::Toast::new(
+                "This drive’s local folder isn’t available yet.",
+            ));
+            return;
+        }
+        let file = gio::File::for_path(path);
+        gtk::FileLauncher::new(Some(&file)).launch(
+            self.window().as_ref(),
+            gio::Cancellable::NONE,
+            glib::clone!(
+                #[weak(rename_to = browser)]
+                self,
+                move |result| {
+                    if let Err(err) = result
+                        && !err.matches(gtk::DialogError::Dismissed)
+                        && !err.matches(gtk::DialogError::Cancelled)
+                    {
+                        browser.toast(adw::Toast::new(&format!(
+                            "Couldn’t open the local folder: {err}"
+                        )));
+                    }
+                }
+            ),
+        );
+    }
+
     fn split_view(
         self: &Rc<Self>,
         transfers: &gtk::Widget,
@@ -1531,6 +1605,16 @@ impl Browser {
             }
         ));
         header.pack_end(&self.sync_button);
+        self.open_local_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = browser)]
+            self,
+            move |_| {
+                if let Some(id) = browser.current_drive_id() {
+                    browser.open_local_drive(&id);
+                }
+            }
+        ));
+        header.pack_end(&self.open_local_button);
 
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.append(&self.breadcrumbs);
@@ -1865,8 +1949,7 @@ impl Browser {
         *self.drives.borrow_mut() = drives;
     }
 
-    /// Right-clicking My Drive or a shared drive in the sidebar offers to keep all of it
-    /// in sync, or to stop.
+    /// Right-clicking a drive offers sync controls and its local folder.
     fn install_sidebar_menu(self: &Rc<Self>) {
         for list in [&self.places, &self.drives_list] {
             let click = gtk::GestureClick::builder()
@@ -1904,6 +1987,14 @@ impl Browser {
     fn show_sync_menu(self: &Rc<Self>, parent: &gtk::ListBox, target: FileEntry, x: f64, y: f64) {
         let synced = self.sync_view().1.contains(&target.id);
         let menu = gio::Menu::new();
+        if self.local_drive_folder(&target.id).is_some() {
+            let open = gio::MenuItem::new(Some("Open local folder"), None);
+            open.set_action_and_target_value(
+                Some("win.open-local-folder"),
+                Some(&target.id.as_str().to_variant()),
+            );
+            menu.append_item(&open);
+        }
         let item = gio::MenuItem::new(
             Some(if synced {
                 "Stop Syncing"

@@ -16,6 +16,7 @@ aerie-core.workspace = true
 aerie-drive.workspace = true
 aerie-engine.workspace = true
 aerie-store.workspace = true
+aerie-sync.workspace = true
 async-channel.workspace = true
 gtk.workspace = true
 pango.workspace = true

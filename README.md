@@ -26,6 +26,8 @@ Aerie stores the sign-in in the system keyring and caches Drive metadata in `~/.
 
 Open **Sync** in the sidebar, choose an empty local folder (Aerie suggests `~/Aerie`), and pick folders from the top of My Drive. Edits, renames and deletions then flow both ways. Deletions go to the trash on the other side. When both sides changed a file, Aerie keeps both. Sync runs in a small background service, `aerie-service`, which the app starts and which keeps syncing after you close the window. It exits on its own when there's nothing to sync. Pause or stop syncing on the Sync page to stop it.
 
+To open a drive’s synced files in your file manager, click the folder button in the header or right-click the drive in the sidebar and choose **Open local folder**. This also works while syncing is paused.
+
 ## Spikes
 
 `cargo run -p aerie-drive --example drive_spike` exercises sign-in, listing and change tracking from the terminal (add `-- --watch` to follow changes). `cargo run -p aerie-drive --example write_spike` runs upload and overwrite tests in an "Aerie test" folder, with access only to files Aerie creates. `cargo run -p aerie-sync --example sync_spike` runs live sync scenarios there.
